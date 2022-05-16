@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from collections import defaultdict
 import wandb
 import argparse
 import os
@@ -21,6 +22,7 @@ from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 from transformers.models.auto.configuration_auto import AutoConfig
 from tqdm import tqdm
 from datasets.load import load_metric
+from rouge_score import rouge_scorer
 import nltk
 
 from nmt_model import NMT
@@ -80,10 +82,13 @@ def validate_model(model: nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTr
         'max_length': config['max_tgt_length'],
         'num_beams': config['num_beams'],
     }
-    metric = load_metric('rouge')
+    batch_metric = load_metric('rouge')
     all_inputs = []
     all_preds = []
     all_labels = []
+
+    indiv_metric = load_metric('rouge')
+    all_indiv_metrics = defaultdict(list)
     for i, batch in enumerate(tqdm(dataloader)):
         if num_batches is not None and i == num_batches:
             break
@@ -126,12 +131,24 @@ def validate_model(model: nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTr
         all_labels.extend(decoded_labels)
         if i == 0 and config['wandb']:
             log_preds_gt_table(decoded_inputs, decoded_preds, decoded_labels, pred_table_name)
-        metric.add_batch(predictions=decoded_preds, references=decoded_labels)
+        batch_metric.add_batch(predictions=decoded_preds, references=decoded_labels)
+        print('Ran forward pass, evaluating preds...')
+        for pred, label in tqdm(zip(decoded_preds, decoded_labels)):
+            scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+            indiv_metrics = scorer.score(label, pred)
+            # indiv_metric.add(prediction=pred, reference=label)
+            # indiv_metrics = indiv_metric.compute()
+            assert(indiv_metrics is not None)
+            indiv_metrics = {k: v.fmeasure * 100 for k, v in indiv_metrics.items()}
+            indiv_metrics = {k: round(v, 4) for k, v in indiv_metrics.items()}
+            for metric, score in indiv_metrics.items():
+                all_indiv_metrics[metric].append(score)
 
-    val_df = pd.DataFrame({'input': all_inputs, 'pred': all_preds, 'label': all_labels})
+    val_df = pd.DataFrame({'input': all_inputs, 'pred': all_preds,
+                           'label': all_labels, **all_indiv_metrics})
     val_df.to_csv(os.path.join(data_dir, config['output_val_csv']), index=False)
 
-    metrics = metric.compute(use_stemmer=True)
+    metrics = batch_metric.compute(use_stemmer=True)
     assert(metrics is not None)
     # Extract a few results from ROUGE
     metrics = {key: value.mid.fmeasure * 100 for key, value in metrics.items()}
@@ -159,7 +176,7 @@ def run_experiment(config: dict):
     val_source_texts = list(df_val[config['input_column']])
     val_target_texts = list(df_val[config['output_column']])
     print('Tokenizing inputs...')
-    tokenizer = AutoTokenizer.from_pretrained('facebook/bart-base',
+    tokenizer = AutoTokenizer.from_pretrained('t5-small',
         config=AutoConfig.from_pretrained(config['pretrained_model'], max_position_embeddings=config['max_src_length']))
     if (not isinstance(tokenizer, PreTrainedTokenizerFast) and
         not isinstance(tokenizer, PreTrainedTokenizer)):
@@ -299,7 +316,7 @@ def main():
     parser.add_argument('--dropout-rate', type=float, default=0.2,
                         help='Dropout rate for the LSTM')
 
-    parser.add_argument('--pretrained-model', type=str, default='facebook/bart-base', metavar='MODEL',
+    parser.add_argument('--pretrained-model', type=str, default='t5-small', metavar='MODEL',
                         help=('Name of pretrained Huggingface model/tokenizer to use. '
                               'If in lstm mode, only uses the tokenizer'))
     parser.add_argument('--train-csv-path', type=str,

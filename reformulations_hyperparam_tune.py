@@ -66,12 +66,20 @@ def postprocess_text(text: list[str]):
     text = ['\n'.join(nltk.sent_tokenize(pred)) for pred in text]
     return text
 
-def log_preds_gt_table(decoded_inputs, decoded_preds, decoded_labels, table_name):
+def log_preds_gt_table(decoded_inputs, decoded_preds, decoded_labels, table_name, use_wandb):
     """🐝 Log a wandb.Table with (inpt, pred, target)"""
-    table = wandb.Table(columns=['input (parent reformulation)', 'prediction', 'target (child utterance)'])
-    for inpt, pred, targ in zip(decoded_inputs, decoded_preds, decoded_labels):
-        table.add_data(inpt, pred, targ)
-    wandb.log({table_name: table}, commit=False)
+    if use_wandb:
+        table = wandb.Table(columns=['input (parent reformulation)', 'prediction', 'target (child utterance)'])
+        for inpt, pred, targ in zip(decoded_inputs, decoded_preds, decoded_labels):
+            table.add_data(inpt, pred, targ)
+        wandb.log({table_name: table}, commit=False)
+    else:
+        df = pd.DataFrame({'input (parent reformulation)': decoded_inputs,
+                           'prediction': decoded_preds,
+                           'target (child utterance)': decoded_labels})
+        print('Some sample predictions:')
+        print(df.head(16))
+
 
 def validate_model(model: nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast], dataloader: DataLoader,
                    metric_prefix: str, config: dict, pred_table_name: str, num_batches=None):
@@ -117,8 +125,8 @@ def validate_model(model: nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTr
         decoded_preds = postprocess_text(decoded_preds)
         decoded_labels = postprocess_text(decoded_labels)
         decoded_inputs = postprocess_text(decoded_inputs)
-        if i == 0 and config['wandb']:
-            log_preds_gt_table(decoded_inputs, decoded_preds, decoded_labels, pred_table_name)
+        if i == 0:
+            log_preds_gt_table(decoded_inputs, decoded_preds, decoded_labels, pred_table_name, config['wandb'])
         metric.add_batch(predictions=decoded_preds, references=decoded_labels)
     metrics = metric.compute(use_stemmer=True)
     assert(metrics is not None)
@@ -132,8 +140,19 @@ def run_experiment(config: dict):
     df_val = pd.read_csv(config['val_csv_path'])
     # make type checker happy
     assert(isinstance(df_train, pd.DataFrame) and isinstance(df_val, pd.DataFrame))
+    if config['prepend_child_age_months']:
+        df_train[config['input_column']] = (df_train['target_child_age'].round().astype(int).astype(str) +
+                                            ' ' + df_train[config['input_column']])
+        df_val[config['input_column']] = (df_val['target_child_age'].round().astype(int).astype(str) +
+                                            ' ' + df_val[config['input_column']])
+    elif config['prepend_child_age_years']:
+        df_train[config['input_column']] = ((df_train['target_child_age'].round().astype(int) // 12).astype(str) +
+                                            ' ' + df_train[config['input_column']])
+        df_val[config['input_column']] = ((df_val['target_child_age'].round().astype(int) // 12).astype(str) +
+                                            ' ' + df_val[config['input_column']])
     age_query = f'target_child_age >= {config["min_age"]} and target_child_age < {config["max_age"]}'
-    utt_len_query = f'gloss_len >= {config["min_utterance_length"]}'
+    utt_len_query = (f'gloss_len >= {config["min_utterance_length"]} and '
+                     f'parent_gloss_len >= {config["min_adult_utterance_length"]}')
     filter_query = f'{age_query} and {utt_len_query}'
     df_train = df_train.query(filter_query)
     df_val = df_val.query(filter_query)
@@ -300,7 +319,13 @@ def main():
     parser.add_argument('--no-wandb', dest='wandb', action='store_false',
                         help='Turns off wandb experiment tracking (on by default)')
     parser.add_argument('--min-utterance-length', type=int, default=1, metavar='N',
-                        help='Minimum length utterances to include in train/validation data')
+                        help='Minimum length child utterances to include in train/validation data')
+    parser.add_argument('--min-adult-utterance-length', type=int, default=1, metavar='N',
+                        help='Minimum length adult utterances to include in train/validation data')
+    parser.add_argument('--prepend-child-age-months', action='store_true',
+                        help='Whether to prepend the child\'s age (in months) to the inputs')
+    parser.add_argument('--prepend-child-age-years', action='store_true',
+                        help='Whether to prepend the child\'s age (in years) to the inputs')
 
     args = parser.parse_args()
 
