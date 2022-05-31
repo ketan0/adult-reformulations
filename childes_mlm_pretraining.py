@@ -2,32 +2,29 @@
 
 import math
 import random
-from datasets.dataset_dict import DatasetDict
-import wandb
 import argparse
 import os
 from functools import partial
 from typing import Union
+
+import wandb
+import pandas as pd
+import numpy as np
 import torch
 from torch import nn
 from torch.optim import AdamW
-import pandas as pd
-import numpy as np
 from torch.utils.data import DataLoader
-
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.models.auto.modeling_auto import AutoModelForMaskedLM
-from transformers.data.data_collator import DataCollatorForLanguageModeling, DataCollatorForSeq2Seq
+from transformers.data.data_collator import DataCollatorForLanguageModeling
 from transformers.optimization import get_scheduler
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
-from transformers.models.auto.configuration_auto import AutoConfig
-from tqdm import tqdm
-from datasets.load import load_dataset, load_metric
-import nltk
+from datasets.dataset_dict import DatasetDict
+from datasets.load import load_dataset
 
-from nmt_model import NMT
+from tqdm import tqdm
 
 # disable huggingface tokenizer parallelism
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -118,7 +115,7 @@ def run_experiment(config: dict):
         group_texts_fn,
         batched=True,
         batch_size=1000,
-        # num_proc=4,
+        num_proc=4,
     )
     model = AutoModelForMaskedLM.from_pretrained(config['pretrained_model'])
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer,
