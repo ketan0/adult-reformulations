@@ -53,7 +53,7 @@ def validate_model(model: nn.Module, tokenizer: Union[PreTrainedTokenizer, PreTr
     model.eval()
     assert(dataloader)
     losses = []
-    for step, batch in tqdm(enumerate(dataloader)):
+    for step, batch in enumerate(tqdm(dataloader)):
         if num_batches is not None and step == num_batches:
             break
         batch = {k: v.to(device) for k, v in batch.items()}
@@ -158,7 +158,7 @@ def run_experiment(config: dict):
         wandb.watch(model)
     model.to(device)
     print('Evaluating on validation set...')
-    val_metrics = validate_model(model, tokenizer, val_dataloader, 'val/')
+    val_metrics = validate_model(model, tokenizer, val_dataloader, 'val')
     if config['wandb']:
         wandb.log({'train/epoch': 0, **val_metrics})
     else:
@@ -215,10 +215,10 @@ def main():
     parser.add_argument('-d', '--weight-decay', type=float, default=0.0, metavar='N',
                         help='learning rate (default: 3e-5)')
 
-    parser.add_argument('-b', '--batch-size', type=int, default=224, metavar='N',
-                        help='input batch size for training (default: 224)')
-    parser.add_argument('-v', '--val-batch-size', type=int, default=1024, metavar='N',
-                        help='input batch size for evaluation (default: 1024)')
+    parser.add_argument('-b', '--batch-size', type=int, default=64, metavar='N',
+                        help='input batch size for training (default: 64)')
+    parser.add_argument('-v', '--val-batch-size', type=int, default=256, metavar='N',
+                        help='input batch size for evaluation (default: 256)')
     parser.add_argument('-n', '--num-epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 20)')
 
